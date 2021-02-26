@@ -26,10 +26,12 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.ContentObserver;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.net.NetworkKey;
 import android.net.NetworkRequest;
 import android.net.NetworkScoreManager;
@@ -38,6 +40,7 @@ import android.net.wifi.WifiManager;
 import android.net.wifi.WifiNetworkScoreCache;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 
 import androidx.annotation.AnyThread;
@@ -102,6 +105,9 @@ public class BaseWifiTracker implements LifecycleObserver {
             if (WifiManager.WIFI_STATE_CHANGED_ACTION.equals(action)) {
                 if (mWifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLED) {
                     mScanner.start();
+                    WifiTimeoutReceiver.setTimeoutAlarm(context,
+                            Settings.Global.getLong(context.getContentResolver(),
+                                    Settings.Global.WIFI_OFF_TIMEOUT, 0));
                 } else {
                     mScanner.stop();
                 }
@@ -117,6 +123,12 @@ public class BaseWifiTracker implements LifecycleObserver {
                 handleConfiguredNetworksChangedAction(intent);
             } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
                 handleNetworkStateChangedAction(intent);
+                NetworkInfo networkInfo = intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
+                if (!networkInfo.isConnectedOrConnecting()) {
+                    WifiTimeoutReceiver.setTimeoutAlarm(context,
+                            Settings.Global.getLong(context.getContentResolver(),
+                                    Settings.Global.WIFI_OFF_TIMEOUT, 0));
+                }
             } else if (WifiManager.RSSI_CHANGED_ACTION.equals(action)) {
                 handleRssiChangedAction();
             }
@@ -248,6 +260,20 @@ public class BaseWifiTracker implements LifecycleObserver {
                 });
         mScanner = new BaseWifiTracker.Scanner(workerHandler.getLooper());
         sVerboseLogging = mWifiManager.isVerboseLoggingEnabled();
+
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Global.getUriFor(Settings.Global.WIFI_OFF_TIMEOUT),
+                false,
+                new ContentObserver(mMainHandler) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        super.onChange(selfChange);
+                        WifiTimeoutReceiver.setTimeoutAlarm(context,
+                                Settings.Global.getLong(context.getContentResolver(),
+                                        Settings.Global.WIFI_OFF_TIMEOUT, 0));
+                    }
+                }
+        );
     }
 
     /**
